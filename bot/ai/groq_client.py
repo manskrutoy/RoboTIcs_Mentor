@@ -1,24 +1,25 @@
 """
-Groq API client for ultra-fast AI responses.
-Uses Groq's inference engine with OpenAI-compatible API.
+Groq API client for fast LLM inference.
+Compatible with the existing AI client interface.
 """
 
 import logging
 from typing import List, Dict
-from groq import AsyncGroq
+from groq import Groq
 from bot.config import settings
-from bot.ai.prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
 
 
 class GroqClient:
-    """Wrapper for Groq API with conversation context management."""
+    """Wrapper for Groq API."""
     
     def __init__(self):
-        """Initialize the Groq client with API key from settings."""
-        self.client = AsyncGroq(api_key=settings.groq_api_key)
-        self.model = settings.groq_model
+        """Initialize the Groq client."""
+        self.api_key = settings.groq_api_key
+        self.client = Groq(api_key=self.api_key)
+        self.model = settings.groq_model if settings.groq_model else "llama-3.3-70b-versatile"
+        
         logger.info(f"Groq client initialized with model: {self.model}")
     
     async def get_response(
@@ -27,60 +28,60 @@ class GroqClient:
         conversation_history: List[Dict[str, str]] = None,
         system_prompt: str = None
     ) -> str:
-        """
-        Get a response from the AI mentor using Groq.
-        
-        Args:
-            user_message: The user's question or message
-            conversation_history: Previous messages in the conversation
-            system_prompt: Custom system prompt (uses default if not provided)
-        
-        Returns:
-            The AI mentor's response as a string
-        """
+        """Get response from Groq."""
         try:
-            # Use custom system prompt or default
-            prompt = system_prompt or SYSTEM_PROMPT
+            # Build messages array for chat completion
+            messages = []
             
-            # Build messages array in OpenAI format
-            messages = [{"role": "system", "content": prompt}]
+            # Add system prompt if provided
+            if system_prompt:
+                messages.append({
+                    "role": "system",
+                    "content": system_prompt
+                })
+            else:
+                # Default system prompt for FIRST Robotics mentor
+                messages.append({
+                    "role": "system",
+                    "content": (
+                        "You are a helpful and knowledgeable mentor for FIRST Tech Challenge (FTC) robotics. "
+                        "Provide clear, educational responses about robotics, programming, engineering, and teamwork. "
+                        "Be encouraging and supportive while being technically accurate."
+                    )
+                })
             
-            # Add conversation history if provided
+            # Add conversation history (last 6 messages to avoid token limits)
             if conversation_history:
-                messages.extend(conversation_history)
+                for msg in conversation_history[-6:]:
+                    messages.append({
+                        "role": msg["role"],
+                        "content": msg["content"]
+                    })
             
             # Add current user message
-            messages.append({"role": "user", "content": user_message})
+            messages.append({
+                "role": "user",
+                "content": user_message
+            })
             
-            # Log the request
-            logger.info(f"Sending request to Groq (model: {self.model})")
-            
-            # Call Groq API - super fast inference!
-            response = await self.client.chat.completions.create(
+            # Call Groq API
+            response = self.client.chat.completions.create(
                 model=self.model,
                 messages=messages,
-                temperature=0.7,  # Balanced creativity and consistency
-                max_tokens=1000,  # Reasonable length for Telegram
+                temperature=0.7,
+                max_tokens=1024,
             )
             
-            # Extract the response text
-            assistant_message = response.choices[0].message.content
-            
-            # Log token usage
-            logger.info(
-                f"Groq response received. "
-                f"Tokens used: {response.usage.total_tokens} "
-                f"(prompt: {response.usage.prompt_tokens}, "
-                f"completion: {response.usage.completion_tokens})"
-            )
-            
-            return assistant_message
+            if response.choices and len(response.choices) > 0:
+                return response.choices[0].message.content
+            else:
+                return "I couldn't generate a response."
             
         except Exception as e:
             logger.error(f"Error calling Groq API: {e}")
             return (
-                "Sorry, I'm having trouble connecting to my knowledge base right now. 😅\n\n"
-                "Please try again in a moment, or use /help to see what else you can do!"
+                "Sorry, I'm having trouble connecting to my knowledge base right now. 😅\n"
+                "Please try again in a moment."
             )
     
     async def get_learning_response(
@@ -88,22 +89,6 @@ class GroqClient:
         topic_prompt: str,
         user_question: str = None
     ) -> str:
-        """
-        Get a response for a specific learning topic.
-        
-        Args:
-            topic_prompt: The system prompt for this learning topic
-            user_question: Optional follow-up question from the user
-        
-        Returns:
-            The AI mentor's response
-        """
-        if user_question:
-            message = user_question
-        else:
-            message = "Please teach me about this topic."
-        
-        return await self.get_response(
-            user_message=message,
-            system_prompt=topic_prompt
-        )
+        """Get learning content."""
+        message = user_question if user_question else "Please teach me about this topic."
+        return await self.get_response(user_message=message, system_prompt=topic_prompt)
